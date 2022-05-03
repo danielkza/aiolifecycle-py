@@ -1,0 +1,37 @@
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v4.2.0
+  hooks:
+    - id: check-added-large-files
+    - id: check-merge-conflict
+    - id: check-shebang-scripts-are-executable
+    - id: end-of-file-fixer
+    - id: trailing-whitespace
+- repo: https://github.com/asottile/reorder_python_imports
+  rev: v3.1.0
+  hooks:
+    - id: reorder-python-imports
+- repo: https://github.com/asottile/add-trailing-comma
+  rev: v2.2.3
+  hooks:
+    - id: add-trailing-comma
+      args: [--py36-plus]
+- repo: https://github.com/pre-commit/mirrors-autopep8
+  rev: v1.6.0
+  hooks:
+    - id: autopep8
+- repo: https://github.com/PyCQA/flake8
+  rev: 4.0.1
+  hooks:
+    - id: flake8
+- repo: local
+  hooks:
+    - id: mypy
+      name: mypy
+      language: system
+      # Don't run mypy if we're already inside tox as we call pre-commit for
+      # linting
+      entry: sh -c 'test -n "$TOX_WORK_DIR" || tox -v -e mypy -- "$@"'
+      pass_filenames: false
+      types_or: [python, pyi]
+      args: []
