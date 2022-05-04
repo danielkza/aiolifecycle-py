@@ -2,6 +2,10 @@
 
 <!--next-version-placeholder-->
 
+## v0.0.3 (2022-05-04)
+### Fix
+* **cd:** Fix long_description Markdown content type ([`b3479ee`](https://github.com/danielkza/lambda-asyncio-py/commit/b3479ee384df19062b09f42f976854ed0608f991))
+
 ## v0.0.2 (2022-05-04)
 ### Fix
 * **cd:** Don't release on new tags ([`581d5ff`](https://github.com/danielkza/lambda-asyncio-py/commit/581d5ffc6ec70737841f683e520b77288362df15))
