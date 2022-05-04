@@ -1,0 +1,47 @@
+name: py-check
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: test ${{ matrix.py }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        py:
+          - "3.10"
+          - "3.9"
+          - "3.8"
+    steps:
+      - name: Setup python for test ${{ matrix.py }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.py }}
+
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Install tox requirements
+        run: python3 -m pip install 'tox<4' tox-gh-actions
+
+      - name: Run pre-commit
+        uses: cloudposse/github-action-pre-commit@v2.1.2
+
+      - name: Run test suite
+        run: tox
+        env:
+          PYTEST_ADDOPTS: "-vv --durations=10"
+  publish:
+    name: publish
+    run-on: ubuntu-latest
+    environment: main
+    steps:
+      - name: Publish package
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags')
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}
