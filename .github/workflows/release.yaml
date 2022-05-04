@@ -1,0 +1,28 @@
+name: version
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  publish:
+    name: version
+    runs-on: ubuntu-latest
+    environment: main
+    concurrency: release
+    steps:
+      - name: Setup python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.9
+
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Python Semantic Release
+        uses: relekang/python-semantic-release@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          repository_username: __token__
+          repository_password: ${{ secrets.PYPI_API_TOKEN }}

@@ -34,14 +34,3 @@ jobs:
         run: tox
         env:
           PYTEST_ADDOPTS: "-vv --durations=10"
-  publish:
-    name: publish
-    run-on: ubuntu-latest
-    environment: main
-    steps:
-      - name: Publish package
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags')
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          user: __token__
-          password: ${{ secrets.PYPI_API_TOKEN }}

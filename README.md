@@ -74,23 +74,20 @@ import asyncio
 from typing import AsyncIterator, Tuple
 from asyncio.stream import StreamReader, StreamWriter
 
-import aiohttp
+import aiofiles
 from lambda_asyncio import lambda_async_init, lambda_async_handler
 
 @lambda_async_init()
 @asynccontextmanager
-async def () -> AsyncIterator[DatabaseConnection]:
-
-
-@lambda_async_init()
-@asynccontextmanager
-async def connection() -> AsyncIterator[Tuple[StreamReader, StreamWriter]]:
-    reader, writer = await asyncio.open_connection(
-        'google.com', 80)
-    yield reader, writer
+async def json_log_file() -> AsyncIterator[]:
+    async with aiofiles.open('/tmp/my-file.json', mode='a') as f:
+        yield f
 
 @lambda_async_handler()
-async def communicate():
+async def handler(event, context):
+    log_file = await json_log_file()
+    await log_file.write(json.dumps(event) + ")
+    await log_file.
     reader, writer = await connection()
     writer.write('GET / HTTP/1.1\r\n')
     writer.write('Host: google.com\r\n')
