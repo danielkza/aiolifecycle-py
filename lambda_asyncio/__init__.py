@@ -7,4 +7,4 @@ __all__ = [
     'lambda_async_init',
 ]
 
-__version__ = '0.0.0'
+__version__ = '0.0.1'
