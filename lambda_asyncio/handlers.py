@@ -93,7 +93,7 @@ class EventLoop(SelectorEventLoop):
                     _log.debug('Shutting down asyncgens')
                     self.run_until_complete(self.shutdown_asyncgens())
 
-                    if hasattr(self, 'shutdown_default_executor'):
+                    if sys.version_info >= (3, 9):
                         _log.debug('Shutting down executors')
                         self.run_until_complete(self.shutdown_default_executor())
 
