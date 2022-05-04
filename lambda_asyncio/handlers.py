@@ -49,7 +49,7 @@ def run_init_callbacks(
                         await exit_stack.enter_async_context(coro)
                     else:
                         await coro
-        except:  #
+        except:
             await exit_stack.aclose()
             raise
 
