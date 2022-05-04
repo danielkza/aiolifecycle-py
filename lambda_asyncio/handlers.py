@@ -1,132 +1,172 @@
 from __future__ import annotations
 
+import _thread
 import asyncio.events
 import asyncio.runners
 import logging
-import os
 import signal
 import sys
-from asyncio import AbstractEventLoop
-from asyncio.futures import Future
+from asyncio.unix_events import SelectorEventLoop
 from collections import defaultdict
+from contextlib import asynccontextmanager
 from contextlib import AsyncExitStack
-from functools import partial
 from functools import wraps
 from threading import Thread
 from typing import Any
 from typing import AsyncContextManager
 from typing import Awaitable
 from typing import Callable
+from typing import cast
 from typing import List
 from typing import MutableMapping
 from typing import Optional
 from typing import overload
 from typing import TypeVar
+from typing import Union
 
 from typing_extensions import Protocol
 
+
 T = TypeVar("T")
 Response = TypeVar("Response")
-InitCallback = AsyncContextManager[Any]
+InitCallback = Union[
+    Callable[[], AsyncContextManager[Any]],
+    Callable[[], Awaitable[Any]],
+]
 
-_loop: Optional[AbstractEventLoop] = None
+_loop: Optional[EventLoop] = None
 _init_callbacks: MutableMapping[int, List[InitCallback]] = defaultdict(list)
 _log = logging.getLogger(__name__)
 
 
-def run_init_callbacks(
-    loop: AbstractEventLoop, exit_stack: AsyncExitStack,
-) -> None:
-    async def run_callbacks():
+def wrap_sig_handler(f, *fargs, **fkwargs):
+    @wraps(f)
+    def handler(*_):
+        return f(*fargs, **fkwargs)
+
+    return handler
+
+
+class EventLoop(SelectorEventLoop):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+
+        self.__term_event = self.create_future()
+        self.__exit_stack = AsyncExitStack()
+
+    @classmethod
+    def run_in_background_thread(cls, *args, **kwargs) -> "EventLoop":
+        loop = cls(*args, **kwargs)
+
+        # We can't use loop.add_signal_handler because it schedules the callback
+        # in the loop itself. It will run in the background thread, which then
+        # can't make any other signal changes, and hence can't remove the signal
+        # handlers
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, wrap_sig_handler(loop.__terminate, sig))
+
+        # We are threading a bit dangerously into internals here
+        csock = loop._csock  # type: ignore
+        if csock:
+            signal.set_wakeup_fd(csock.fileno())
+
+        t = Thread(target=loop.__thread)
+        t.start()
+
+        return loop
+
+    def __thread(self) -> None:
+        asyncio.set_event_loop(self)
+
         try:
-            for order, callbacks in sorted(_init_callbacks.items()):
-                for callback in callbacks:
-                    _log.info(f"Running init callback: {order}, {callback}")
+            try:
+                self.run_until_complete(self.__term_event)
+            except Exception:
+                _log.exception('Completed with exception')
+                sys.exit(1)
+            finally:
+                try:
+                    _log.debug('Cancelling all tasks')
+                    asyncio.runners._cancel_all_tasks(self)  # type: ignore
 
-                    coro = callback()
+                    _log.debug('Shutting down asyncgens')
+                    self.run_until_complete(self.shutdown_asyncgens())
 
-                    if hasattr(coro, '__aexit__'):
-                        await exit_stack.enter_async_context(coro)
-                    else:
-                        await coro
-        except:
-            await exit_stack.aclose()
-            raise
+                    if hasattr(self, 'shutdown_default_executor'):
+                        _log.debug('Shutting down executors')
+                        self.run_until_complete(self.shutdown_default_executor())
 
-        return exit_stack
+                    _log.debug('Shut down')
+                    self.close()
 
-    fut = asyncio.run_coroutine_threadsafe(run_callbacks(), loop=loop)
-    return fut.result()
+                    asyncio.events.set_event_loop(None)
+                except Exception:
+                    sys.exit(1)
+        finally:
+            _thread.interrupt_main()
 
-
-def start_background_loop(
-    loop: AbstractEventLoop, term_event: Future[None],
-) -> None:
-    asyncio.set_event_loop(loop)
-
-    try:
-        loop.run_until_complete(term_event)
-    except Exception:
-        _log.exception('Completed with exception')
-        sys.exit(1)
-    finally:
+    async def __aterminate(self) -> None:
+        _log.debug('Waiting for cleanup')
         try:
-            _log.debug('Cancelling all tasks')
-            asyncio.runners._cancel_all_tasks(loop)  # type: ignore
-
-            _log.debug('Shutting down asyncgens')
-            loop.run_until_complete(loop.shutdown_asyncgens())
-
-            _log.debug('Shutting down executors')
-            loop.run_until_complete(loop.shutdown_default_executor())
-
-            _log.debug('Shut down')
-            asyncio.events.set_event_loop(None)
-        except Exception:
-            os._exit(1)
-
-    os._exit(0)
-
-
-def terminate(
-    loop: AbstractEventLoop, term_event: Future[None], exit_stack: AsyncExitStack,
-    sig: int, _: Any,
-) -> None:
-    _log.warning(f'Got signal {sig}')
-
-    if not term_event.done():
-        signal.signal(signal.SIGTERM, signal.SIG_DFL)
-        signal.signal(signal.SIGINT, signal.SIG_DFL)
-
-        f = asyncio.run_coroutine_threadsafe(exit_stack.aclose(), loop=loop)
-        try:
-            _log.debug('Waiting for cleanup')
-            f.result()
+            await self.__exit_stack.aclose()
         except Exception:
             _log.exception("Failure cleaning up async inits")
         finally:
-            loop.call_soon_threadsafe(term_event.set_result, None)
+            self.__term_event.set_result(None)
+
+    def __terminate(self, sig: signal.Signals) -> None:
+        _log.warning(f'Got signal {sig}')
+
+        if not self.__term_event.done():
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                signal.signal(sig, signal.SIG_DFL)
+
+            signal.set_wakeup_fd(-1)
+            asyncio.run_coroutine_threadsafe(self.__aterminate(), loop=self)
+
+    @overload
+    async def with_resource(self, cm: Callable[[], Awaitable[T]]) -> T:
+        pass
+
+    @overload
+    async def with_resource(self, cm: Callable[[], AsyncContextManager[T]]) -> T:
+        pass
+
+    async def with_resource(self, cm: InitCallback):
+        coro = cm()
+        if hasattr(coro, '__aexit__'):
+            coro = cast(AsyncContextManager[Any], coro)
+            value = await self.__exit_stack.enter_async_context(coro)
+        else:
+            # Define a dummy context manager to keep the resource alive
+            @asynccontextmanager
+            async def resource():
+                yield (await coro)
+
+            value = await self.__exit_stack.enter_async_context(resource())
+
+        return value
 
 
-def get_loop() -> AbstractEventLoop:
+async def run_init_callbacks(loop: EventLoop) -> None:
+    for _, callbacks in sorted(_init_callbacks.items()):
+        for callback in callbacks:
+            await loop.with_resource(callback)
+
+
+def get_loop() -> EventLoop:
+    # Can't use the standard _get_running_loop() since this loop belongs to a different
+    # thread
     global _loop
     if _loop is not None:
         return _loop
 
-    loop = asyncio.events.new_event_loop()
-    term_event = loop.create_future()
+    _loop = EventLoop.run_in_background_thread()
+    f = asyncio.run_coroutine_threadsafe(run_init_callbacks(_loop), loop=_loop)
+    f.result()
 
-    exit_stack = AsyncExitStack()
-
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(sig, partial(terminate, loop, term_event, exit_stack))
-
-    t = Thread(target=start_background_loop, args=(loop, term_event))
-    t.start()
-
-    run_init_callbacks(loop, exit_stack)
-    _loop = loop
-    return loop
+    return _loop
 
 
 LambdaAsyncHandler = Callable[..., Awaitable[Response]]
@@ -159,21 +199,32 @@ class LambdaAsyncInitDecorator(Protocol):
     @overload
     def __call__(
         self, cm: Callable[[], AsyncContextManager[T]],
-    ) -> Callable[[], AsyncContextManager[T]]:
+    ) -> Callable[[], Awaitable[T]]:
         pass
 
     @overload
     def __call__(
-        self, f: Callable[..., Awaitable[None]],
-    ) -> Callable[..., Awaitable[None]]:
+        self, f: Callable[[], Awaitable[T]],
+    ) -> Callable[[], Awaitable[T]]:
         pass
 
 
-def lambda_async_init(*, order: int = 50) -> LambdaAsyncInitDecorator:
+def lambda_async_init(*, order: Optional[int] = None) -> LambdaAsyncInitDecorator:
     def decorate(cm):
-        global _init_callbacks
-        _init_callbacks[order].append(cm)
+        if order:
+            global _init_callbacks
+            _init_callbacks[order].append(cm)
 
-        return cm
+        async def wrapper(*args, **kwargs):
+            if hasattr(wrapper, '__return_value'):
+                return wrapper.__return_value
+
+            loop = get_loop()
+            return_value = await loop.with_resource(cm)
+            wrapper.__return_value = return_value
+
+            return return_value
+
+        return wrapper
 
     return decorate

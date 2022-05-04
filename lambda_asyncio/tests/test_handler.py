@@ -61,6 +61,7 @@ async def test_handler(
 
         line = line.strip()
         event = json.loads(line)
+        print(event, file=sys.stderr)
         return event
 
     async def read_start():
