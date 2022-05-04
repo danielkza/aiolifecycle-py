@@ -2,6 +2,10 @@
 
 <!--next-version-placeholder-->
 
+## v0.0.2 (2022-05-04)
+### Fix
+* **cd:** Don't release on new tags ([`581d5ff`](https://github.com/danielkza/lambda-asyncio-py/commit/581d5ffc6ec70737841f683e520b77288362df15))
+
 ## v0.0.1 (2022-05-04)
 ### Fix
 * **cd:** Force release ([`7bbac93`](https://github.com/danielkza/lambda-asyncio-py/commit/7bbac93ee910d88b4ac3ef9a0ff33c0e19af2bab))
