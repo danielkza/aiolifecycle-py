@@ -5,12 +5,20 @@ on:
       - main
 
 jobs:
-  publish:
-    name: version
+  release:
+    name: release
     runs-on: ubuntu-latest
     environment: main
     concurrency: release
     steps:
+      - name: Wait for tests to succeed
+        uses: lewagon/wait-on-check-action@v1.0.0
+        with:
+          ref: ${{ github.ref }}
+          running-workflow-name: release
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 2
+
       - name: Setup python
         uses: actions/setup-python@v2
         with:
