@@ -38,11 +38,9 @@ async def my_handler() -> None:
 ```
 
 By default, handlers are *eager*, meaning an event loop will be created and
-initialisation functions will be immediately run on module import. This somewhat
-matches the behaviour of a synchronous Lambda function with resources as global
-module variables.
+initialisation functions will be immediately run on module import.
 
-If you wan to initialise resources only when a handler is first called, do:
+If you want to initialise resources only when a handler is first called, do:
 
 ```python
 import asyncio

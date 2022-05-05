@@ -17,17 +17,17 @@ import pytest_asyncio
 
 
 @dataclass
-class LambdaCall:
+class HandlerCall:
     event: Any
     context: Any
 
 
 @pytest.fixture
-def lambda_calls():
+def handler_calls():
     return [
-        LambdaCall(event={"event": 1}, context={"context": 1}),
-        LambdaCall(event={"event": 2}, context={"context": 2}),
-        LambdaCall(event={"event": 3}, context={"context": 3}),
+        HandlerCall(event={"event": 1}, context={"context": 1}),
+        HandlerCall(event={"event": 2}, context={"context": 2}),
+        HandlerCall(event={"event": 3}, context={"context": 3}),
     ]
 
 
@@ -80,12 +80,12 @@ async def check_events(events: Iterable[Any], stdout: StreamReader) -> None:
         assert (await get_event(stdout)) == event, f"Event {i} doesn't match"
 
 
-async def check_calls(calls: Iterable[LambdaCall], stdout: StreamReader) -> None:
+async def check_calls(calls: Iterable[HandlerCall], stdout: StreamReader) -> None:
     await check_events([{'call': asdict(call)} for call in calls], stdout)
 
 
-async def write_calls(lambda_calls: Iterable[LambdaCall], stdin: StreamWriter) -> None:
-    for call in lambda_calls:
+async def write_calls(handler_calls: Iterable[HandlerCall], stdin: StreamWriter) -> None:
+    for call in handler_calls:
         stdin.write(json.dumps(asdict(call)).encode('utf-8'))
         stdin.write(b"\n")
         await stdin.drain()
@@ -104,7 +104,7 @@ async def pipe_to_file(reader: StreamReader, out: TextIO) -> None:
 @pytest.mark.parametrize("handler_proc", ["basic_order"], indirect=True)
 @pytest.mark.asyncio
 async def test_handler_basic(
-    lambda_calls: List[LambdaCall], handler_proc: asyncio.subprocess.Process,
+    handler_calls: List[HandlerCall], handler_proc: asyncio.subprocess.Process,
 ) -> None:
     proc = handler_proc
 
@@ -126,11 +126,11 @@ async def test_handler_basic(
 
     async def read():
         await check_events(start_events, stdout)
-        await check_calls(lambda_calls, stdout)
+        await check_calls(handler_calls, stdout)
 
     r_out = asyncio.create_task(read())
     r_err = asyncio.create_task(pipe_to_file(stderr, sys.stderr))
-    w = asyncio.create_task(write_calls(lambda_calls, stdin))
+    w = asyncio.create_task(write_calls(handler_calls, stdin))
     await asyncio.wait_for(asyncio.gather(r_out, w), timeout=10)
 
     proc.terminate()
@@ -144,7 +144,7 @@ async def test_handler_basic(
 @pytest.mark.parametrize("handler_proc", ["resource_chaining"], indirect=True)
 @pytest.mark.asyncio
 async def test_handler_resource_chaining(
-    lambda_calls: List[LambdaCall], handler_proc: asyncio.subprocess.Process,
+    handler_calls: List[HandlerCall], handler_proc: asyncio.subprocess.Process,
 ) -> None:
     proc = handler_proc
 
@@ -168,13 +168,13 @@ async def test_handler_resource_chaining(
     async def read():
         await check_events(start_events, stdout)
 
-        for call in lambda_calls:
+        for call in handler_calls:
             await check_events([{"value": 30}], stdout)
             await check_calls([call], stdout)
 
     r_out = asyncio.create_task(read())
     r_err = asyncio.create_task(pipe_to_file(stderr, sys.stderr))
-    w = asyncio.create_task(write_calls(lambda_calls, stdin))
+    w = asyncio.create_task(write_calls(handler_calls, stdin))
     await asyncio.wait_for(asyncio.gather(r_out, w), timeout=10)
 
     proc.terminate()

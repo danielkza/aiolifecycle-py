@@ -9,7 +9,7 @@ class InitException(Exception):
 
 class InitHandlerCycleException(InitException):
     def __init__(self, chain: Iterable[Any]) -> None:
-        msg = "Cycle detected in Lambda init handler chain\n"
+        msg = "Cycle detected in lifecycle init handler chain\n"
         for handler in chain:
             module = getmodule(handler)
             if module:
