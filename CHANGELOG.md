@@ -2,6 +2,10 @@
 
 <!--next-version-placeholder-->
 
+## v0.1.1 (2022-05-05)
+### Fix
+* **license:** Update copyright ([`588e5a3`](https://github.com/danielkza/aiolifecycle-py/commit/588e5a3602672310bc76f4077dc0a100953982e4))
+
 ## v0.1.0 (2022-05-05)
 ### Feature
 * **all:** Remove remaining lambda references ([`c003c73`](https://github.com/danielkza/aiolifecycle-py/commit/c003c736836e7e59828d10fe494f786345d6e5ec))
