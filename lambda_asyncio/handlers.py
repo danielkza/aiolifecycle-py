@@ -10,6 +10,7 @@ from asyncio.unix_events import SelectorEventLoop
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from contextlib import AsyncExitStack
+from contextvars import ContextVar
 from functools import wraps
 from threading import Thread
 from typing import Any
@@ -25,6 +26,8 @@ from typing import TypeVar
 from typing import Union
 
 from typing_extensions import Protocol
+
+from .exceptions import InitHandlerCycleException
 
 
 T = TypeVar("T")
@@ -209,15 +212,25 @@ class LambdaAsyncInitDecorator(Protocol):
         pass
 
 
+lambda_init_handler_chain = ContextVar('lambda_init_handler_chain', default=())
+
+
 def lambda_async_init(*, order: Optional[int] = None) -> LambdaAsyncInitDecorator:
     def decorate(cm):
         if order:
             global _init_callbacks
             _init_callbacks[order].append(cm)
 
-        async def wrapper(*args, **kwargs):
+        @wraps(cm)
+        async def wrapper():
             if hasattr(wrapper, '__return_value'):
                 return wrapper.__return_value
+
+            chain = lambda_init_handler_chain.get()
+            if cm in chain:
+                raise InitHandlerCycleException(chain + (cm,))
+
+            lambda_init_handler_chain.set(chain + (cm,))
 
             loop = get_loop()
             return_value = await loop.with_resource(cm)
