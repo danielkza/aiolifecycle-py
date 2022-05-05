@@ -68,8 +68,10 @@ async def get_event(stdout: StreamReader) -> Any:
         raise asyncio.CancelledError()
 
     line = line.strip()
+    print(line, file=sys.stderr)
+
     event = json.loads(line)
-    print(event, file=sys.stderr)
+
     return event
 
 
@@ -157,7 +159,6 @@ async def test_handler_resource_chaining(
         {"init": 10},
         {"init": 20},
         {"init": 30},
-
     ]
 
     end_events = [
@@ -166,6 +167,7 @@ async def test_handler_resource_chaining(
 
     async def read():
         await check_events(start_events, stdout)
+
         for call in lambda_calls:
             await check_events([{"value": 30}], stdout)
             await check_calls([call], stdout)

@@ -7,6 +7,7 @@ import logging
 import signal
 import sys
 import threading
+from asyncio import Future
 from asyncio.unix_events import SelectorEventLoop
 from collections import defaultdict
 from contextlib import asynccontextmanager
@@ -40,7 +41,7 @@ InitCallback = Union[
 ]
 
 _loop: Optional[EventLoop] = None
-_loop_lock = threading.Lock()
+_loop_lock = threading.RLock()
 _init_callbacks: MutableMapping[int, List[InitCallback]] = defaultdict(list)
 _log = logging.getLogger(__name__)
 
@@ -160,13 +161,18 @@ async def run_init_callbacks(loop: EventLoop) -> None:
         for callback in callbacks:
             await loop.with_resource(callback)
 
+    _init_callbacks.clear()
+
 
 def get_loop() -> EventLoop:
     # Can't use the standard _get_running_loop() since this loop belongs to a different
     # thread
 
+    global _loop
+    if _loop is not None:
+        return _loop
+
     with _loop_lock:
-        global _loop
         if _loop is not None:
             return _loop
 
@@ -174,7 +180,7 @@ def get_loop() -> EventLoop:
         f = asyncio.run_coroutine_threadsafe(run_init_callbacks(_loop), loop=_loop)
         f.result()
 
-        return _loop
+    return _loop
 
 
 AsyncHandler = Callable[..., Awaitable[Response]]
@@ -227,12 +233,6 @@ def init(*, order: Optional[int] = None, lazy: bool = False) -> SyncInitDecorato
         raise ValueError("Can't specify order for lazy init")
 
     def decorate(cm):
-        if not lazy:
-            real_order = order or 2 ** 32 - 1
-
-            global _init_callbacks
-            _init_callbacks[real_order].append(cm)
-
         # These callbacks will actually be schedule in a separate thread, as thats
         # how our loop runs. To avoid conflicting initialisations we need some form
         # of synchronization when doing the result caching. We do this by taking
@@ -242,30 +242,43 @@ def init(*, order: Optional[int] = None, lazy: bool = False) -> SyncInitDecorato
         # If initialisation has already taken place, we will just get the existing result
         # in the future.
 
-        async def async_wrapper(loop: EventLoop):
-            chain = aiolifecycle_init_chain.get()
-            if cm in chain:
-                raise InitHandlerCycleException(chain + (cm,))
-
-            aiolifecycle_init_chain.set(chain + (cm,))
-
-            return_value = await loop.with_resource(cm)
-            return return_value
+        async def async_wrapper(loop: EventLoop, future: Future):
+            try:
+                return_value = await loop.with_resource(cm)
+                future.set_result(return_value)
+            except BaseException as err:
+                _log.exception("async_wrapper error")
+                future.set_exception(err)
 
         @wraps(cm)
         def sync_wrapper():
+            chain = aiolifecycle_init_chain.get()
+            if sync_wrapper in chain:
+                raise InitHandlerCycleException(chain + (sync_wrapper,))
+
+            aiolifecycle_init_chain.set(chain + (sync_wrapper,))
+
             loop = get_loop()
-            with sync_wrapper.__aiolifecycle_result_lock:
-                fut = getattr(sync_wrapper, '__aiolifecyle_result_fut', None)
+            with sync_wrapper._aiolifecycle_result_lock:
+                fut = getattr(sync_wrapper, '_aiolifecycle_result_fut', None)
                 if fut is None:
-                    fut = asyncio.run_coroutine_threadsafe(
-                        async_wrapper(loop), loop=loop,
+                    fut = loop.create_future()
+                    asyncio.run_coroutine_threadsafe(
+                        async_wrapper(loop, fut), loop=loop,
                     )
-                    sync_wrapper.__aiolifecycle_result_fut = fut
+
+                    sync_wrapper._aiolifecycle_result_fut = fut
 
                 return fut
 
-        sync_wrapper.__aiolifecycle_result_lock = threading.Lock()
+        sync_wrapper._aiolifecycle_result_lock = threading.Lock()
+
+        if not lazy:
+            real_order = order or 2 ** 32 - 1
+
+            global _init_callbacks
+            _init_callbacks[real_order].append(sync_wrapper)
+
         return sync_wrapper
 
     return decorate
