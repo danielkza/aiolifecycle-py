@@ -2,6 +2,10 @@
 
 <!--next-version-placeholder-->
 
+## v0.1.0 (2022-05-05)
+### Feature
+* **all:** Remove remaining lambda references ([`c003c73`](https://github.com/danielkza/aiolifecycle-py/commit/c003c736836e7e59828d10fe494f786345d6e5ec))
+
 ## v0.0.4 (2022-05-05)
 ### Fix
 * **handlers:** Cycle detection ([`018ba95`](https://github.com/danielkza/aiolifecycle-py/commit/018ba9507ab88c0f3b66e92d2723f83d0e732e98))
