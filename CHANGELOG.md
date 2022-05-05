@@ -2,6 +2,13 @@
 
 <!--next-version-placeholder-->
 
+## v0.0.4 (2022-05-05)
+### Fix
+* **handlers:** Cycle detection ([`018ba95`](https://github.com/danielkza/aiolifecycle-py/commit/018ba9507ab88c0f3b66e92d2723f83d0e732e98))
+* **handlers:** Rename handlers to remove lambda references ([`de9643b`](https://github.com/danielkza/aiolifecycle-py/commit/de9643bfa4c1b7934d00c35c5e8a8a4441cc209a))
+* **tests:** For new resource management ([`5f30e6d`](https://github.com/danielkza/aiolifecycle-py/commit/5f30e6d6f54b55166647947caadc62ae64a0528c))
+* **metadata:** Use Markdown version of Apache License [skip ci] ([`bfaf82e`](https://github.com/danielkza/aiolifecycle-py/commit/bfaf82eb3efd0faaa0fcfd0610e3c5f960b17777))
+
 ## v0.0.3 (2022-05-04)
 ### Fix
 * **cd:** Fix long_description Markdown content type ([`b3479ee`](https://github.com/danielkza/aiolifecycle-py/commit/b3479ee384df19062b09f42f976854ed0608f991))
