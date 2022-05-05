@@ -1,9 +1,9 @@
 import asyncio
 
-from aiolifecycle import lambda_async_handler
+from aiolifecycle import sync
 
 
-@lambda_async_handler()
-async def my_handler(event, context) -> None:
+@sync()
+async def my_handler() -> None:
     await asyncio.sleep(1)
     return None

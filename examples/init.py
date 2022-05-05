@@ -1,15 +1,15 @@
 import asyncio
 
-from aiolifecycle import lambda_async_handler
-from aiolifecycle import lambda_async_init
+from aiolifecycle import init
+from aiolifecycle import sync
 
 
-@lambda_async_init()
+@init()
 async def my_init() -> None:
     print('Hello, world!')
 
 
-@lambda_async_handler()
+@sync()
 async def my_handler(event, context) -> None:
     await asyncio.sleep(1)
     return None

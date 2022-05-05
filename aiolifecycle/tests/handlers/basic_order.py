@@ -5,8 +5,8 @@ from contextlib import asynccontextmanager
 from typing import Any
 from typing import AsyncIterator
 
-from aiolifecycle.handlers import lambda_async_handler
-from aiolifecycle.handlers import lambda_async_init
+from aiolifecycle.handlers import init
+from aiolifecycle.handlers import sync
 
 
 def write_json(data: Any) -> None:
@@ -15,7 +15,7 @@ def write_json(data: Any) -> None:
     sys.stdout.flush()
 
 
-@lambda_async_init(order=20)
+@init(order=20)
 @asynccontextmanager
 async def init10() -> AsyncIterator[None]:
     write_json({"init": 20})
@@ -23,7 +23,7 @@ async def init10() -> AsyncIterator[None]:
     write_json({"close": 20})
 
 
-@lambda_async_init(order=10)
+@init(order=10)
 @asynccontextmanager
 async def init20() -> AsyncIterator[None]:
     write_json({"init": 10})
@@ -31,7 +31,7 @@ async def init20() -> AsyncIterator[None]:
     write_json({"close": 10})
 
 
-@lambda_async_handler()
+@sync()
 async def handler(event, context) -> None:
     write_json({"call": {"event": event, "context": context}})
 

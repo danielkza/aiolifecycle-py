@@ -1,10 +1,10 @@
-from .handlers import lambda_async_handler
-from .handlers import lambda_async_init
+from .handlers import init
+from .handlers import sync
 
 __all__ = [
     '__version__',
-    'lambda_async_handler',
-    'lambda_async_init',
+    'sync',
+    'init',
 ]
 
 __version__ = '0.0.3'

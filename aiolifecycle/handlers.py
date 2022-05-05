@@ -6,6 +6,7 @@ import asyncio.runners
 import logging
 import signal
 import sys
+import threading
 from asyncio.unix_events import SelectorEventLoop
 from collections import defaultdict
 from contextlib import asynccontextmanager
@@ -22,6 +23,7 @@ from typing import List
 from typing import MutableMapping
 from typing import Optional
 from typing import overload
+from typing import Tuple
 from typing import TypeVar
 from typing import Union
 
@@ -38,6 +40,7 @@ InitCallback = Union[
 ]
 
 _loop: Optional[EventLoop] = None
+_loop_lock = threading.Lock()
 _init_callbacks: MutableMapping[int, List[InitCallback]] = defaultdict(list)
 _log = logging.getLogger(__name__)
 
@@ -161,28 +164,30 @@ async def run_init_callbacks(loop: EventLoop) -> None:
 def get_loop() -> EventLoop:
     # Can't use the standard _get_running_loop() since this loop belongs to a different
     # thread
-    global _loop
-    if _loop is not None:
+
+    with _loop_lock:
+        global _loop
+        if _loop is not None:
+            return _loop
+
+        _loop = EventLoop.run_in_background_thread()
+        f = asyncio.run_coroutine_threadsafe(run_init_callbacks(_loop), loop=_loop)
+        f.result()
+
         return _loop
 
-    _loop = EventLoop.run_in_background_thread()
-    f = asyncio.run_coroutine_threadsafe(run_init_callbacks(_loop), loop=_loop)
-    f.result()
 
-    return _loop
+AsyncHandler = Callable[..., Awaitable[Response]]
+SyncHandler = Callable[..., Response]
 
 
-LambdaAsyncHandler = Callable[..., Awaitable[Response]]
-LambdaHandler = Callable[..., Response]
-
-
-class LambdaAsyncHandlerDecorator(Protocol):
-    def __call__(self, f: LambdaAsyncHandler) -> LambdaHandler:
+class AsyncHandlerDecorator(Protocol):
+    def __call__(self, f: AsyncHandler) -> SyncHandler:
         pass
 
 
-def lambda_async_handler(*, eager: bool = True) -> LambdaAsyncHandlerDecorator:
-    def decorate(f: LambdaAsyncHandler) -> LambdaHandler:
+def sync(*, eager: bool = True) -> AsyncHandlerDecorator:
+    def decorate(f: AsyncHandler) -> SyncHandler:
         @wraps(f)
         def handler(*args, **kwargs) -> Response:
             loop = get_loop()
@@ -198,7 +203,7 @@ def lambda_async_handler(*, eager: bool = True) -> LambdaAsyncHandlerDecorator:
     return decorate
 
 
-class LambdaAsyncInitDecorator(Protocol):
+class SyncInitDecorator(Protocol):
     @overload
     def __call__(
         self, cm: Callable[[], AsyncContextManager[T]],
@@ -212,32 +217,55 @@ class LambdaAsyncInitDecorator(Protocol):
         pass
 
 
-lambda_init_handler_chain = ContextVar('lambda_init_handler_chain', default=())
+aiolifecycle_init_chain: ContextVar[Tuple[Any, ...]] = ContextVar(
+    'aiolifecycle_init_chain', default=(),
+)
 
 
-def lambda_async_init(*, order: Optional[int] = None) -> LambdaAsyncInitDecorator:
+def init(*, order: Optional[int] = None, lazy: bool = False) -> SyncInitDecorator:
+    if order is not None and lazy:
+        raise ValueError("Can't specify order for lazy init")
+
     def decorate(cm):
-        if order:
+        if not lazy:
+            real_order = order or 2 ** 32 - 1
+
             global _init_callbacks
-            _init_callbacks[order].append(cm)
+            _init_callbacks[real_order].append(cm)
 
-        @wraps(cm)
-        async def wrapper():
-            if hasattr(wrapper, '__return_value'):
-                return wrapper.__return_value
+        # These callbacks will actually be schedule in a separate thread, as thats
+        # how our loop runs. To avoid conflicting initialisations we need some form
+        # of synchronization when doing the result caching. We do this by taking
+        # a lock in the synchronous part of the call, spinning up a coroutine in
+        # the background if we haven't initialised yet, and returning the corresponding
+        # future.
+        # If initialisation has already taken place, we will just get the existing result
+        # in the future.
 
-            chain = lambda_init_handler_chain.get()
+        async def async_wrapper(loop: EventLoop):
+            chain = aiolifecycle_init_chain.get()
             if cm in chain:
                 raise InitHandlerCycleException(chain + (cm,))
 
-            lambda_init_handler_chain.set(chain + (cm,))
+            aiolifecycle_init_chain.set(chain + (cm,))
 
-            loop = get_loop()
             return_value = await loop.with_resource(cm)
-            wrapper.__return_value = return_value
-
             return return_value
 
-        return wrapper
+        @wraps(cm)
+        def sync_wrapper():
+            loop = get_loop()
+            with sync_wrapper.__aiolifecycle_result_lock:
+                fut = getattr(sync_wrapper, '__aiolifecyle_result_fut', None)
+                if fut is None:
+                    fut = asyncio.run_coroutine_threadsafe(
+                        async_wrapper(loop), loop=loop,
+                    )
+                    sync_wrapper.__aiolifecycle_result_fut = fut
+
+                return fut
+
+        sync_wrapper.__aiolifecycle_result_lock = threading.Lock()
+        return sync_wrapper
 
     return decorate
