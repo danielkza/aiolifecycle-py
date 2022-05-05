@@ -1,7 +1,7 @@
 import asyncio
 
-from lambda_asyncio import lambda_async_handler
-from lambda_asyncio import lambda_async_init
+from aiolifecycle import lambda_async_handler
+from aiolifecycle import lambda_async_init
 
 
 @lambda_async_init(order=20)

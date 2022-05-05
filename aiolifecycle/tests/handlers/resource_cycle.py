@@ -3,8 +3,8 @@ import logging
 import sys
 from typing import Any
 
-from lambda_asyncio.handlers import lambda_async_handler
-from lambda_asyncio.handlers import lambda_async_init
+from aiolifecycle.handlers import lambda_async_handler
+from aiolifecycle.handlers import lambda_async_init
 
 
 def write_json(data: Any) -> None:

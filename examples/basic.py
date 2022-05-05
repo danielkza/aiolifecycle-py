@@ -1,6 +1,6 @@
 import asyncio
 
-from lambda_asyncio import lambda_async_handler
+from aiolifecycle import lambda_async_handler
 
 
 @lambda_async_handler()

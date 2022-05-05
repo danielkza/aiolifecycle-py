@@ -5,8 +5,8 @@ from typing import AsyncIterator
 import aiofiles
 from aiofiles.threadpool.text import AsyncTextIOWrapper
 
-from lambda_asyncio import lambda_async_handler
-from lambda_asyncio import lambda_async_init
+from aiolifecycle import lambda_async_handler
+from aiolifecycle import lambda_async_init
 
 
 @lambda_async_init()
