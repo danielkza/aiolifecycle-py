@@ -256,20 +256,22 @@ def init(*, order: Optional[int] = None, lazy: bool = False) -> SyncInitDecorato
             if sync_wrapper in chain:
                 raise InitHandlerCycleException(chain + (sync_wrapper,))
 
-            aiolifecycle_init_chain.set(chain + (sync_wrapper,))
+            reset_chain = aiolifecycle_init_chain.set(chain + (sync_wrapper,))
+            try:
+                loop = get_loop()
+                with sync_wrapper._aiolifecycle_result_lock:
+                    fut = getattr(sync_wrapper, '_aiolifecycle_result_fut', None)
+                    if fut is None:
+                        fut = loop.create_future()
+                        asyncio.run_coroutine_threadsafe(
+                            async_wrapper(loop, fut), loop=loop,
+                        )
 
-            loop = get_loop()
-            with sync_wrapper._aiolifecycle_result_lock:
-                fut = getattr(sync_wrapper, '_aiolifecycle_result_fut', None)
-                if fut is None:
-                    fut = loop.create_future()
-                    asyncio.run_coroutine_threadsafe(
-                        async_wrapper(loop, fut), loop=loop,
-                    )
+                        sync_wrapper._aiolifecycle_result_fut = fut
 
-                    sync_wrapper._aiolifecycle_result_fut = fut
-
-                return fut
+                    return fut
+            finally:
+                aiolifecycle_init_chain.reset(reset_chain)
 
         sync_wrapper._aiolifecycle_result_lock = threading.Lock()
 
