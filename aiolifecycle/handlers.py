@@ -7,6 +7,7 @@ import logging
 import signal
 import sys
 import threading
+import weakref
 from asyncio import Future
 from asyncio.unix_events import SelectorEventLoop
 from collections import defaultdict
@@ -54,6 +55,15 @@ def wrap_sig_handler(f, *fargs, **fkwargs):
     return handler
 
 
+def wait_thread(thread_ref: weakref.ReferenceType[Thread]):
+    # Wait until our loop finishes before allowing Python to shutdown threads
+    thread = thread_ref()
+    if not thread or not thread.is_alive():
+        return
+
+    thread.join()
+
+
 class EventLoop(SelectorEventLoop):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -79,6 +89,11 @@ class EventLoop(SelectorEventLoop):
             signal.set_wakeup_fd(csock.fileno())
 
         t = Thread(target=loop.__thread)
+
+        # Wait for our loop to finish on interpreter termination
+        if hasattr(threading, '_register_atexit'):
+            threading._register_atexit(wait_thread, weakref.ref(t))  # type: ignore
+
         t.start()
 
         return loop
@@ -91,25 +106,21 @@ class EventLoop(SelectorEventLoop):
                 self.run_until_complete(self.__term_event)
             except Exception:
                 _log.exception('Completed with exception')
-                sys.exit(1)
             finally:
-                try:
-                    _log.debug('Cancelling all tasks')
-                    asyncio.runners._cancel_all_tasks(self)  # type: ignore
+                _log.debug('Cancelling all tasks')
+                asyncio.runners._cancel_all_tasks(self)  # type: ignore
 
-                    _log.debug('Shutting down asyncgens')
-                    self.run_until_complete(self.shutdown_asyncgens())
+                _log.debug('Shutting down asyncgens')
+                self.run_until_complete(self.shutdown_asyncgens())
 
-                    if sys.version_info >= (3, 9):
-                        _log.debug('Shutting down executors')
-                        self.run_until_complete(self.shutdown_default_executor())
+                if sys.version_info >= (3, 9):
+                    _log.debug('Shutting down executors')
+                    self.run_until_complete(self.shutdown_default_executor())
 
-                    _log.debug('Shut down')
-                    self.close()
+                _log.debug('Shut down')
+                self.close()
 
-                    asyncio.events.set_event_loop(None)
-                except Exception:
-                    sys.exit(1)
+                asyncio.events.set_event_loop(None)
         finally:
             _thread.interrupt_main()
 
