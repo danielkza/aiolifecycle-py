@@ -2,6 +2,10 @@
 
 <!--next-version-placeholder-->
 
+## v0.1.3 (2022-05-09)
+### Fix
+* **loop:** Wait for loop on interpreter termination ([`e6b9825`](https://github.com/danielkza/aiolifecycle-py/commit/e6b9825ce38134af160ed77c06f0bfb47eef2a83))
+
 ## v0.1.2 (2022-05-09)
 ### Fix
 * **init:** Add missing reset for context var ([#1](https://github.com/danielkza/aiolifecycle-py/issues/1)) ([`fc7f654`](https://github.com/danielkza/aiolifecycle-py/commit/fc7f6546711002abb84343bde080b17cf8da97f2))
