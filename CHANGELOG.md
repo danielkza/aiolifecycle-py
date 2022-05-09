@@ -2,6 +2,10 @@
 
 <!--next-version-placeholder-->
 
+## v0.1.2 (2022-05-09)
+### Fix
+* **init:** Add missing reset for context var ([#1](https://github.com/danielkza/aiolifecycle-py/issues/1)) ([`fc7f654`](https://github.com/danielkza/aiolifecycle-py/commit/fc7f6546711002abb84343bde080b17cf8da97f2))
+
 ## v0.1.1 (2022-05-05)
 ### Fix
 * **license:** Update copyright ([`588e5a3`](https://github.com/danielkza/aiolifecycle-py/commit/588e5a3602672310bc76f4077dc0a100953982e4))
