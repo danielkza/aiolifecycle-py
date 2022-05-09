@@ -212,3 +212,32 @@ async def test_handler_resource_cycle(
     assert "exception" in event
     assert "InitHandlerCycleException" in event["exception"]
     assert "Cycle detected" in event["exception"]
+
+
+@pytest.mark.parametrize(
+    "handler_proc", ["resource_cycle_context_reset"], indirect=True,
+)
+@pytest.mark.asyncio
+async def test_handler_resource_cycle_context_reset(
+    handler_proc: asyncio.subprocess.Process,
+) -> None:
+    proc = handler_proc
+
+    stdout = proc.stdout
+    assert stdout is not None
+    stderr = proc.stderr
+    assert stderr is not None
+    stdin = proc.stdin
+    assert stdin is not None
+
+    run = asyncio.create_task(get_event(stdout))
+    r_err = asyncio.create_task(pipe_to_file(stderr, sys.stderr))
+    await asyncio.wait_for(run, timeout=10)
+
+    proc.terminate()
+    await r_err
+
+    await proc.wait()
+
+    event = run.result()
+    assert "exception" not in event
