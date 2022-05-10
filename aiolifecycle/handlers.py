@@ -58,7 +58,7 @@ def wrap_sig_handler(f, *fargs, **fkwargs):
 def wait_thread(thread_ref: weakref.ReferenceType[Thread]):
     # Wait until our loop finishes before allowing Python to shutdown threads
     thread = thread_ref()
-    if not thread or not thread.is_alive():
+    if not thread:
         return
 
     thread.join()
@@ -91,6 +91,9 @@ class EventLoop(SelectorEventLoop):
         t = Thread(target=loop.__thread)
 
         # Wait for our loop to finish on interpreter termination
+        # Make sure ThreadPoolExecutor sets up its cleanup before us, so our
+        # functions gets called first on exit
+        import concurrent.futures.thread  # noqa
         if hasattr(threading, '_register_atexit'):
             threading._register_atexit(wait_thread, weakref.ref(t))  # type: ignore
 
