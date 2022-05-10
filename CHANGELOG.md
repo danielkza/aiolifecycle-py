@@ -2,6 +2,10 @@
 
 <!--next-version-placeholder-->
 
+## v0.1.4 (2022-05-10)
+### Fix
+* **init:** Fix threading atexit registration order ([`0a3a861`](https://github.com/danielkza/aiolifecycle-py/commit/0a3a861cd01b1b7c34acb253d08a8a05538c7930))
+
 ## v0.1.3 (2022-05-09)
 ### Fix
 * **loop:** Wait for loop on interpreter termination ([`e6b9825`](https://github.com/danielkza/aiolifecycle-py/commit/e6b9825ce38134af160ed77c06f0bfb47eef2a83))
