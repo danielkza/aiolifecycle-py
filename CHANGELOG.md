@@ -2,6 +2,10 @@
 
 <!--next-version-placeholder-->
 
+## v0.1.6 (2022-05-11)
+### Fix
+* **init:** Exit immediately on init failure ([`8abe43b`](https://github.com/danielkza/aiolifecycle-py/commit/8abe43b71344445bc42c8003a3ca89508e7409b1))
+
 ## v0.1.5 (2022-05-11)
 ### Fix
 * **init:** Exit immediately on init failure ([`9652c7c`](https://github.com/danielkza/aiolifecycle-py/commit/9652c7ce68941826a55be3892d07cac78d27924c))
