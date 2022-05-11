@@ -2,6 +2,10 @@
 
 <!--next-version-placeholder-->
 
+## v0.1.5 (2022-05-11)
+### Fix
+* **init:** Exit immediately on init failure ([`9652c7c`](https://github.com/danielkza/aiolifecycle-py/commit/9652c7ce68941826a55be3892d07cac78d27924c))
+
 ## v0.1.4 (2022-05-10)
 ### Fix
 * **init:** Fix threading atexit registration order ([`0a3a861`](https://github.com/danielkza/aiolifecycle-py/commit/0a3a861cd01b1b7c34acb253d08a8a05538c7930))
