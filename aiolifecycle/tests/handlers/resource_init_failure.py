@@ -13,17 +13,17 @@ def write_json(data: Any) -> None:
     sys.stdout.flush()
 
 
-@init()
+@init(lazy=True)
 async def fail() -> str:
     raise RuntimeError("Init failed")
 
 
 @sync(eager=False)
 async def handler() -> None:
+    await fail()
     assert False, "Should not reach"
 
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
-
     handler()

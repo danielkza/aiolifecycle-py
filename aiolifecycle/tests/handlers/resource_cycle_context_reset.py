@@ -6,6 +6,8 @@ from typing import Any
 from aiolifecycle.handlers import init
 from aiolifecycle.handlers import sync
 
+logging.basicConfig(level=logging.DEBUG)
+
 
 def write_json(data: Any) -> None:
     json.dump(data, sys.stdout)

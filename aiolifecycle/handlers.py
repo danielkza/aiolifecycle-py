@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import asyncio.events
 import asyncio.runners
+import concurrent.futures
 import logging
-import os
 import signal
 import sys
 import threading
 import weakref
-from asyncio import Future
 from asyncio.unix_events import SelectorEventLoop
 from collections import defaultdict
 from contextlib import asynccontextmanager
@@ -41,10 +40,12 @@ InitCallback = Union[
     Callable[[], Awaitable[Any]],
 ]
 
-_loop: Optional[EventLoop] = None
-_loop_lock = threading.RLock()
 _init_callbacks: MutableMapping[int, List[InitCallback]] = defaultdict(list)
 _log = logging.getLogger(__name__)
+
+aiolifecycle_init_chain: ContextVar[Tuple[Any, ...]] = ContextVar(
+    'aiolifecycle_init_chain', default=(),
+)
 
 
 def wrap_sig_handler(f, *fargs, **fkwargs):
@@ -84,44 +85,43 @@ class EventLoop(SelectorEventLoop):
             if not self.__term_event.done():
                 self.__term_event.set_result(1)
 
-    def _close(self) -> None:
-        if not self.__term_event.done():
-            for sig in (signal.SIGTERM, signal.SIGINT):
-                signal.signal(sig, signal.SIG_DFL)
+    def _close(self, sig: Optional[int] = None) -> None:
+        if self.__term_event.done():
+            return
 
-            signal.set_wakeup_fd(-1)
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, signal.SIG_DFL)
 
-            if not self.is_running():
-                self.run_until_complete(self.__aclose())
-            else:
-                fut = asyncio.run_coroutine_threadsafe(self.__aclose(), loop=self)
-                fut.result()
+        signal.set_wakeup_fd(-1)
+
+        if not self.is_running():
+            self.run_until_complete(self.__aclose())
+        else:
+            fut = asyncio.run_coroutine_threadsafe(self.__aclose(), loop=self)
+            fut.result()
 
     def __thread(self) -> None:
         asyncio.set_event_loop(self)
 
         try:
-            try:
-                self.run_until_complete(self.__term_event)
-            except Exception:
-                _log.exception('Completed with exception')
-            finally:
-                _log.debug('Cancelling all tasks')
-                asyncio.runners._cancel_all_tasks(self)  # type: ignore
-
-                _log.debug('Shutting down asyncgens')
-                self.run_until_complete(self.shutdown_asyncgens())
-
-                if sys.version_info >= (3, 9):
-                    _log.debug('Shutting down executors')
-                    self.run_until_complete(self.shutdown_default_executor())
-
-                _log.debug('Shut down')
-                self.close()
-
-                asyncio.events.set_event_loop(None)
+            self.run_until_complete(self.__term_event)
+        except Exception:
+            _log.exception('Completed with exception')
         finally:
-            os.kill(os.getpid(), signal.SIGINT)
+            _log.debug('Cancelling all tasks')
+            asyncio.runners._cancel_all_tasks(self)  # type: ignore
+
+            _log.debug('Shutting down asyncgens')
+            self.run_until_complete(self.shutdown_asyncgens())
+
+            if sys.version_info >= (3, 9):
+                _log.debug('Shutting down executors')
+                self.run_until_complete(self.shutdown_default_executor())
+
+            _log.debug('Shut down')
+            self.close()
+
+            asyncio.events.set_event_loop(None)
 
     def run_in_background_thread(self) -> None:
         # We can't use loop.add_signal_handler because it schedules the callback
@@ -130,7 +130,7 @@ class EventLoop(SelectorEventLoop):
         # handlers
 
         for sig in (signal.SIGTERM, signal.SIGINT):
-            signal.signal(sig, wrap_sig_handler(self._close))
+            signal.signal(sig, wrap_sig_handler(self._close, sig))
 
         # We are threading a bit dangerously into internals here
         csock = self._csock  # type: ignore
@@ -138,14 +138,6 @@ class EventLoop(SelectorEventLoop):
             signal.set_wakeup_fd(csock.fileno())
 
         t = Thread(target=self.__thread)
-
-        # Wait for our loop to finish on interpreter termination
-        # Make sure ThreadPoolExecutor sets up its cleanup before us, so our
-        # functions gets called first on exit
-        import concurrent.futures.thread  # noqa
-        if hasattr(threading, '_register_atexit'):
-            threading._register_atexit(wait_thread, weakref.ref(t))  # type: ignore
-
         t.start()
 
     @overload
@@ -177,28 +169,51 @@ async def run_init_callbacks(loop: EventLoop) -> None:
         for callback in callbacks:
             await loop.with_resource(callback)
 
-    _init_callbacks.clear()
+
+_loop: Optional[EventLoop] = None
+_loop_lock = threading.RLock()
+_loop_init: Optional[concurrent.futures.Future] = None
 
 
 def get_loop() -> EventLoop:
-    # Can't use the standard _get_running_loop() since this loop belongs to a different
-    # thread
+    loop = asyncio.events._get_running_loop()
+    if loop:
+        assert isinstance(loop, EventLoop)
+        return loop
 
-    global _loop
-    if _loop is not None:
-        return _loop
+    global _loop, _loop_lock, _loop_init
 
     with _loop_lock:
-        if _loop is not None:
-            return _loop
-
-        _loop = EventLoop()
         try:
-            _loop.run_until_complete(run_init_callbacks(_loop))
-            _loop.run_in_background_thread()
+            if _loop is None:
+                _loop = EventLoop()
+                _loop.run_in_background_thread()
+                _loop_init = asyncio.run_coroutine_threadsafe(
+                    run_init_callbacks(_loop), loop=_loop,
+                )
         except BaseException:
-            _loop._close()
+            if _loop is not None:
+                if _loop_init and not _loop_init.done():
+                    _loop_init.cancel()
+
+                _loop._close()
+                _loop = None
+
             raise
+
+    assert _loop_init
+    try:
+        _loop_init.result()
+    except BaseException:
+        # Repeat the cleanup separately because we need to release the lock
+        # to grab the result, but take it again here
+
+        with _loop_lock:
+            _loop._close()
+            _loop = None
+            _loop_init = None
+
+        raise
 
     return _loop
 
@@ -216,10 +231,15 @@ def sync(*, eager: bool = True) -> AsyncHandlerDecorator:
     def decorate(f: AsyncHandler) -> SyncHandler:
         @wraps(f)
         def handler(*args, **kwargs) -> Response:
+            # kill the whole program if an init fails
             loop = get_loop()
 
-            fut = asyncio.run_coroutine_threadsafe(f(*args, **kwargs), loop=loop)
-            return fut.result()
+            try:
+                fut = asyncio.run_coroutine_threadsafe(f(*args, **kwargs), loop=loop)
+                return fut.result()
+            except BaseException:
+                loop._close()
+                raise
 
         if eager:
             get_loop()
@@ -243,11 +263,6 @@ class SyncInitDecorator(Protocol):
         pass
 
 
-aiolifecycle_init_chain: ContextVar[Tuple[Any, ...]] = ContextVar(
-    'aiolifecycle_init_chain', default=(),
-)
-
-
 def init(*, order: Optional[int] = None, lazy: bool = False) -> SyncInitDecorator:
     if order is not None and lazy:
         raise ValueError("Can't specify order for lazy init")
@@ -262,13 +277,8 @@ def init(*, order: Optional[int] = None, lazy: bool = False) -> SyncInitDecorato
         # If initialisation has already taken place, we will just get the existing result
         # in the future.
 
-        async def async_wrapper(loop: EventLoop, future: Future):
-            try:
-                return_value = await loop.with_resource(cm)
-                future.set_result(return_value)
-            except BaseException as err:
-                _log.exception("async_wrapper error")
-                future.set_exception(err)
+        lock = threading.Lock()
+        result_fut: Optional[concurrent.futures.Future] = None
 
         @wraps(cm)
         def sync_wrapper():
@@ -279,21 +289,17 @@ def init(*, order: Optional[int] = None, lazy: bool = False) -> SyncInitDecorato
             reset_chain = aiolifecycle_init_chain.set(chain + (sync_wrapper,))
             try:
                 loop = get_loop()
-                with sync_wrapper._aiolifecycle_result_lock:
-                    fut = getattr(sync_wrapper, '_aiolifecycle_result_fut', None)
-                    if fut is None:
-                        fut = loop.create_future()
-                        asyncio.run_coroutine_threadsafe(
-                            async_wrapper(loop, fut), loop=loop,
+
+                with lock:
+                    nonlocal result_fut
+                    if not result_fut:
+                        result_fut = asyncio.run_coroutine_threadsafe(
+                            loop.with_resource(cm), loop=loop,
                         )
 
-                        sync_wrapper._aiolifecycle_result_fut = fut
-
-                    return fut
+                return asyncio.wrap_future(result_fut, loop=loop)
             finally:
                 aiolifecycle_init_chain.reset(reset_chain)
-
-        sync_wrapper._aiolifecycle_result_lock = threading.Lock()
 
         if not lazy:
             real_order = order or 2 ** 32 - 1
