@@ -31,6 +31,7 @@ from typing import Union
 from typing_extensions import Protocol
 
 from .exceptions import InitHandlerCycleException
+from .exceptions import InitHandlerFailureException
 
 
 T = TypeVar("T")
@@ -227,10 +228,6 @@ class AsyncHandlerDecorator(Protocol):
         pass
 
 
-class LifeycleInitFailure(BaseException):
-    pass
-
-
 def sync(*, eager: bool = True) -> AsyncHandlerDecorator:
     def decorate(f: AsyncHandler) -> SyncHandler:
         @wraps(f)
@@ -246,7 +243,9 @@ def sync(*, eager: bool = True) -> AsyncHandlerDecorator:
                     try:
                         loop._close()
                     finally:
-                        raise LifeycleInitFailure('Init lifecycle function failed')
+                        raise InitHandlerFailureException(
+                            'Init lifecycle function failed',
+                        ) from err
                 else:
                     raise
 
@@ -292,7 +291,7 @@ def init(*, order: Optional[int] = None, lazy: bool = False) -> SyncInitDecorato
         async def mark_exception(coro):
             try:
                 return await coro
-            except Exception as err:
+            except BaseException as err:
                 err._aiolifecycle_init_exc = True
                 raise
 
@@ -302,20 +301,22 @@ def init(*, order: Optional[int] = None, lazy: bool = False) -> SyncInitDecorato
             if sync_wrapper in chain:
                 raise InitHandlerCycleException(chain + (sync_wrapper,))
 
-            reset_chain = aiolifecycle_init_chain.set(chain + (sync_wrapper,))
-            try:
-                loop = get_loop()
+            loop = get_loop()
 
-                with lock:
-                    nonlocal result_fut
-                    if not result_fut:
-                        result_fut = asyncio.run_coroutine_threadsafe(
+            with lock:
+                nonlocal result_fut
+
+                fut = result_fut
+                if not fut:
+                    reset_chain = aiolifecycle_init_chain.set(chain + (sync_wrapper,))
+                    try:
+                        result_fut = fut = asyncio.run_coroutine_threadsafe(
                             mark_exception(loop.with_resource(cm)), loop=loop,
                         )
+                    finally:
+                        aiolifecycle_init_chain.reset(reset_chain)
 
-                return asyncio.wrap_future(result_fut, loop=loop)
-            finally:
-                aiolifecycle_init_chain.reset(reset_chain)
+            return asyncio.wrap_future(fut, loop=loop)
 
         if not lazy:
             real_order = order or 2 ** 32 - 1

@@ -20,3 +20,7 @@ class InitHandlerCycleException(InitException):
             msg += f"  {module_name}.{handler.__qualname__}\n"
 
         super().__init__(msg)
+
+
+class InitHandlerFailureException(InitException):
+    pass
