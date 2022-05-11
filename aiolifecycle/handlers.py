@@ -227,19 +227,25 @@ class AsyncHandlerDecorator(Protocol):
         pass
 
 
+class LifeycleInitFailure(BaseException):
+    pass
+
+
 def sync(*, eager: bool = True) -> AsyncHandlerDecorator:
     def decorate(f: AsyncHandler) -> SyncHandler:
         @wraps(f)
         def handler(*args, **kwargs) -> Response:
-            # kill the whole program if an init fails
             loop = get_loop()
 
+            fut = asyncio.run_coroutine_threadsafe(f(*args, **kwargs), loop=loop)
             try:
-                fut = asyncio.run_coroutine_threadsafe(f(*args, **kwargs), loop=loop)
                 return fut.result()
-            except BaseException:
-                loop._close()
-                raise
+            except BaseException as err:
+                if hasattr(err, '_aiolifecycle_init_exc'):
+                    # Raise a more powerful exception on init failure
+                    raise LifeycleInitFailure('Init lifecycle function failed')
+                else:
+                    raise
 
         if eager:
             get_loop()
@@ -280,6 +286,13 @@ def init(*, order: Optional[int] = None, lazy: bool = False) -> SyncInitDecorato
         lock = threading.Lock()
         result_fut: Optional[concurrent.futures.Future] = None
 
+        async def mark_exception(coro):
+            try:
+                return await coro
+            except Exception as err:
+                err._aiolifecycle_init_exc = True
+                raise
+
         @wraps(cm)
         def sync_wrapper():
             chain = aiolifecycle_init_chain.get()
@@ -294,7 +307,7 @@ def init(*, order: Optional[int] = None, lazy: bool = False) -> SyncInitDecorato
                     nonlocal result_fut
                     if not result_fut:
                         result_fut = asyncio.run_coroutine_threadsafe(
-                            loop.with_resource(cm), loop=loop,
+                            mark_exception(loop.with_resource(cm)), loop=loop,
                         )
 
                 return asyncio.wrap_future(result_fut, loop=loop)
