@@ -2,6 +2,11 @@
 
 <!--next-version-placeholder-->
 
+## v0.1.7 (2022-05-11)
+### Fix
+* **init:** Raise terminating exception on init function failure bubbling up ([`69c0f88`](https://github.com/danielkza/aiolifecycle-py/commit/69c0f8890faca5cb0ff341bfa3b75aea465125cd))
+* **init:** Raise terminating exception on init function failure bubbling up ([`024734d`](https://github.com/danielkza/aiolifecycle-py/commit/024734d0e13ab145a529056be495bf9de8fe4746))
+
 ## v0.1.6 (2022-05-11)
 ### Fix
 * **init:** Exit immediately on init failure ([`8abe43b`](https://github.com/danielkza/aiolifecycle-py/commit/8abe43b71344445bc42c8003a3ca89508e7409b1))
