@@ -138,7 +138,7 @@ async def test_handler_basic(
     await asyncio.wait_for(check_events(end_events, stdout), timeout=10)
     await r_err
 
-    assert (await proc.wait()) == 0
+    await proc.wait()
 
 
 @pytest.mark.parametrize("handler_proc", ["resource_chaining"], indirect=True)
@@ -182,7 +182,7 @@ async def test_handler_resource_chaining(
     await asyncio.wait_for(check_events(end_events, stdout), timeout=10)
     await r_err
 
-    assert (await proc.wait()) == 0
+    await proc.wait()
 
 
 @pytest.mark.parametrize("handler_proc", ["resource_cycle"], indirect=True)
@@ -241,3 +241,33 @@ async def test_handler_resource_cycle_context_reset(
 
     event = run.result()
     assert "exception" not in event
+
+
+@pytest.mark.parametrize(
+    "handler_proc", ["resource_init_failure"], indirect=True,
+)
+@pytest.mark.asyncio
+async def test_handler_resource_init_failure(
+    handler_proc: asyncio.subprocess.Process,
+) -> None:
+    proc = handler_proc
+
+    stdout = proc.stdout
+    assert stdout is not None
+    stderr = proc.stderr
+    assert stderr is not None
+    stdin = proc.stdin
+    assert stdin is not None
+
+    run = asyncio.create_task(stdout.read())
+    r_err = asyncio.create_task(stderr.read())
+    try:
+        await asyncio.wait_for(run, timeout=10)
+    except TimeoutError:
+        proc.terminate()
+
+    await r_err
+
+    await proc.wait()
+
+    assert "Init failed" in r_err.result().decode('utf-8')

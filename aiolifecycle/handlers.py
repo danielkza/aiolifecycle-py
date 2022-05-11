@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import _thread
 import asyncio.events
 import asyncio.runners
 import logging
+import os
 import signal
 import sys
 import threading
@@ -49,7 +49,9 @@ _log = logging.getLogger(__name__)
 
 def wrap_sig_handler(f, *fargs, **fkwargs):
     @wraps(f)
-    def handler(*_):
+    def handler(sig, *_):
+        _log.warning(f'Got signal {sig}')
+
         return f(*fargs, **fkwargs)
 
     return handler
@@ -71,35 +73,29 @@ class EventLoop(SelectorEventLoop):
         self.__term_event = self.create_future()
         self.__exit_stack = AsyncExitStack()
 
-    @classmethod
-    def run_in_background_thread(cls, *args, **kwargs) -> "EventLoop":
-        loop = cls(*args, **kwargs)
+    async def __aclose(self) -> None:
+        _log.debug('Waiting for cleanup')
+        try:
+            await self.__exit_stack.aclose()
+            self.__term_event.set_result(0)
+        except Exception:
+            _log.exception("Failure cleaning up async resources")
+        finally:
+            if not self.__term_event.done():
+                self.__term_event.set_result(1)
 
-        # We can't use loop.add_signal_handler because it schedules the callback
-        # in the loop itself. It will run in the background thread, which then
-        # can't make any other signal changes, and hence can't remove the signal
-        # handlers
+    def _close(self) -> None:
+        if not self.__term_event.done():
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                signal.signal(sig, signal.SIG_DFL)
 
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            signal.signal(sig, wrap_sig_handler(loop.__terminate, sig))
+            signal.set_wakeup_fd(-1)
 
-        # We are threading a bit dangerously into internals here
-        csock = loop._csock  # type: ignore
-        if csock:
-            signal.set_wakeup_fd(csock.fileno())
-
-        t = Thread(target=loop.__thread)
-
-        # Wait for our loop to finish on interpreter termination
-        # Make sure ThreadPoolExecutor sets up its cleanup before us, so our
-        # functions gets called first on exit
-        import concurrent.futures.thread  # noqa
-        if hasattr(threading, '_register_atexit'):
-            threading._register_atexit(wait_thread, weakref.ref(t))  # type: ignore
-
-        t.start()
-
-        return loop
+            if not self.is_running():
+                self.run_until_complete(self.__aclose())
+            else:
+                fut = asyncio.run_coroutine_threadsafe(self.__aclose(), loop=self)
+                fut.result()
 
     def __thread(self) -> None:
         asyncio.set_event_loop(self)
@@ -125,26 +121,32 @@ class EventLoop(SelectorEventLoop):
 
                 asyncio.events.set_event_loop(None)
         finally:
-            _thread.interrupt_main()
+            os.kill(os.getpid(), signal.SIGINT)
 
-    async def __aterminate(self) -> None:
-        _log.debug('Waiting for cleanup')
-        try:
-            await self.__exit_stack.aclose()
-        except Exception:
-            _log.exception("Failure cleaning up async inits")
-        finally:
-            self.__term_event.set_result(None)
+    def run_in_background_thread(self) -> None:
+        # We can't use loop.add_signal_handler because it schedules the callback
+        # in the loop itself. It will run in the background thread, which then
+        # can't make any other signal changes, and hence can't remove the signal
+        # handlers
 
-    def __terminate(self, sig: signal.Signals) -> None:
-        _log.warning(f'Got signal {sig}')
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, wrap_sig_handler(self._close))
 
-        if not self.__term_event.done():
-            for sig in (signal.SIGTERM, signal.SIGINT):
-                signal.signal(sig, signal.SIG_DFL)
+        # We are threading a bit dangerously into internals here
+        csock = self._csock  # type: ignore
+        if csock:
+            signal.set_wakeup_fd(csock.fileno())
 
-            signal.set_wakeup_fd(-1)
-            asyncio.run_coroutine_threadsafe(self.__aterminate(), loop=self)
+        t = Thread(target=self.__thread)
+
+        # Wait for our loop to finish on interpreter termination
+        # Make sure ThreadPoolExecutor sets up its cleanup before us, so our
+        # functions gets called first on exit
+        import concurrent.futures.thread  # noqa
+        if hasattr(threading, '_register_atexit'):
+            threading._register_atexit(wait_thread, weakref.ref(t))  # type: ignore
+
+        t.start()
 
     @overload
     async def with_resource(self, cm: Callable[[], Awaitable[T]]) -> T:
@@ -190,9 +192,13 @@ def get_loop() -> EventLoop:
         if _loop is not None:
             return _loop
 
-        _loop = EventLoop.run_in_background_thread()
-        f = asyncio.run_coroutine_threadsafe(run_init_callbacks(_loop), loop=_loop)
-        f.result()
+        _loop = EventLoop()
+        try:
+            _loop.run_until_complete(run_init_callbacks(_loop))
+            _loop.run_in_background_thread()
+        except BaseException:
+            _loop._close()
+            raise
 
     return _loop
 
