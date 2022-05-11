@@ -242,8 +242,11 @@ def sync(*, eager: bool = True) -> AsyncHandlerDecorator:
                 return fut.result()
             except BaseException as err:
                 if hasattr(err, '_aiolifecycle_init_exc'):
-                    # Raise a more powerful exception on init failure
-                    raise LifeycleInitFailure('Init lifecycle function failed')
+                    # Terminate init failure
+                    try:
+                        loop._close()
+                    finally:
+                        raise LifeycleInitFailure('Init lifecycle function failed')
                 else:
                     raise
 
