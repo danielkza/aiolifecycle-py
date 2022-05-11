@@ -2,6 +2,10 @@
 
 <!--next-version-placeholder-->
 
+## v0.1.8 (2022-05-11)
+### Fix
+* **init:** Fix cycle checking scope ([`9e76ea7`](https://github.com/danielkza/aiolifecycle-py/commit/9e76ea703027ac514adbc1c7822324d77e089c19))
+
 ## v0.1.7 (2022-05-11)
 ### Fix
 * **init:** Raise terminating exception on init function failure bubbling up ([`69c0f88`](https://github.com/danielkza/aiolifecycle-py/commit/69c0f8890faca5cb0ff341bfa3b75aea465125cd))
